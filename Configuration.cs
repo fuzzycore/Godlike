@@ -12,7 +12,7 @@ public class Configuration : IPluginConfiguration
     // PvP killstreak announcer with escalating voice callouts.
     public bool KillStreakEnabled { get; set; } = true;
     public bool KillStreakShowMilestones { get; set; } = true; // escalating streak announcer banners
-    public bool KillStreakResetOnDeath { get; set; } = true;   // when false, dying keeps the streak going
+    public bool KillStreakResetOnDeath { get; set; } = false;  // default off: dying keeps the streak going; when true, dying ends it
     public bool KillStreakVoiceEnabled { get; set; } = true;   // play the bundled voice-announcer pack
     public float KillStreakVoiceVolume { get; set; } = 1.0f;   // 0..1
 
