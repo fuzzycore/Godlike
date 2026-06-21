@@ -39,12 +39,24 @@ public unsafe class KillStreak : IDisposable
     private const int KnockoutOffset = 0x33B8;
     private int lastKnockouts = -1;
 
+    // The local player's Frontline "Battle High" rank (0-5), a single byte in the same content
+    // director, sitting immediately before the knockout counter. (PvpStats' FrontlineContentDirector
+    // maps PlayerBattleHigh at 0x24D2 + 0xEE5 = 0x33B7, i.e. KnockoutOffset - 1.) Tied to
+    // KnockoutOffset so re-locating the knockout counter on a patch carries Battle High along with
+    // it - same PATCH-FRAGILE caveat applies. We fire a (queued) callout each time the rank climbs.
+    private const int BattleHighOffset = KnockoutOffset - 1;
+    private int lastBattleHigh = -1;
+
     // Tracks the local player's alive/dead state so we can reset the streak the moment we die.
     private bool wasDead;
 
     // Cache of resolved per-tier voice files, rebuilt whenever the configured folder changes.
     private string loadedVoiceFolder = string.Empty;
     private readonly Dictionary<int, string> voiceFiles = new();
+
+    // Resolved Battle High voice files, keyed by rank 1-5 (files BATTLE_HIGH_ONE..FIVE).
+    private readonly Dictionary<int, string> battleHighFiles = new();
+    private static readonly string[] BattleHighWords = { "ONE", "TWO", "THREE", "FOUR", "FIVE" };
 
     private static readonly string[] VoiceExtensions = { ".wav", ".mp3" };
 
@@ -221,34 +233,36 @@ public unsafe class KillStreak : IDisposable
     private void RebuildVoiceCache(string folder)
     {
         voiceFiles.Clear();
+        battleHighFiles.Clear();
         loadedVoiceFolder = folder;
 
         for (var i = 0; i < StreakTiers.Length; i++)
         {
-            var candidates = new List<string>
-            {
-                StreakTiers[i].Threshold.ToString(),
-                Slug(StreakTiers[i].Name),
-            };
-
-            foreach (var baseName in candidates)
-            {
-                var found = false;
-                foreach (var ext in VoiceExtensions)
-                {
-                    var path = Path.Combine(folder, baseName + ext);
-                    if (File.Exists(path))
-                    {
-                        voiceFiles[i] = path;
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (found)
-                    break;
-            }
+            var path = ResolveAudioFile(folder, StreakTiers[i].Threshold.ToString(), Slug(StreakTiers[i].Name));
+            if (path != null)
+                voiceFiles[i] = path;
         }
+
+        for (var level = 1; level <= BattleHighWords.Length; level++)
+        {
+            var path = ResolveAudioFile(folder, $"BATTLE_HIGH_{BattleHighWords[level - 1]}");
+            if (path != null)
+                battleHighFiles[level] = path;
+        }
+    }
+
+    /// <summary>Returns the first existing audio file matching any of the given base names (in order),
+    /// trying each supported extension, or null if none exist.</summary>
+    private static string? ResolveAudioFile(string folder, params string[] baseNames)
+    {
+        foreach (var baseName in baseNames)
+            foreach (var ext in VoiceExtensions)
+            {
+                var path = Path.Combine(folder, baseName + ext);
+                if (File.Exists(path))
+                    return path;
+            }
+        return null;
     }
 
     private static string Slug(string name)
@@ -282,6 +296,7 @@ public unsafe class KillStreak : IDisposable
         testCount = 0;
         bannerUntil = DateTime.MinValue;
         lastKnockouts = -1;
+        lastBattleHigh = -1;
         wasDead = false;
     }
 
@@ -308,7 +323,10 @@ public unsafe class KillStreak : IDisposable
         // and reset the streak the instant we die.
         if (Plugin.Configuration.KillStreakEnabled)
         {
+            // Order matters: process kills first so their callout is already playing when a
+            // resulting Battle High rank-up queues its line up behind it.
             PollKnockoutCounter();
+            PollBattleHigh();
             PollLocalDeath();
         }
 
@@ -374,6 +392,71 @@ public unsafe class KillStreak : IDisposable
         catch
         {
             // Offset may drift across patches - never fatal.
+        }
+    }
+
+    /// <summary>Watches the local player's Battle High rank and fires a callout each time it climbs.
+    /// The callout is queued behind any in-flight kill callout (see <see cref="OnBattleHighRankUp"/>)
+    /// because the same kill that earned a rank-up should be announced in full first. Decay (the rank
+    /// dropping over time) is tracked silently so climbing back up re-triggers.</summary>
+    private void PollBattleHigh()
+    {
+        var dir = GetFrontlineDirector();
+        if (dir == null)
+        {
+            lastBattleHigh = -1;
+            return;
+        }
+
+        try
+        {
+            int level = *(dir + BattleHighOffset);
+
+            // Valid ranks are 0-5; anything else means we're reading the wrong bytes - don't fire.
+            if (level is < 0 or > 5)
+                return;
+
+            if (lastBattleHigh < 0)
+            {
+                // First read this match - baseline silently.
+                lastBattleHigh = level;
+                return;
+            }
+
+            if (level > lastBattleHigh)
+                OnBattleHighRankUp(level);
+
+            lastBattleHigh = level;
+        }
+        catch
+        {
+            // Offset may drift across patches - never fatal.
+        }
+    }
+
+    private void OnBattleHighRankUp(int level)
+    {
+        if (!Plugin.Configuration.KillStreakVoiceEnabled)
+            return;
+
+        try
+        {
+            var folder = ResolveVoiceFolder();
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+                return;
+
+            if (folder != loadedVoiceFolder)
+                RebuildVoiceCache(folder);
+
+            if (!battleHighFiles.TryGetValue(level, out var path) || !File.Exists(path))
+                return;
+
+            // Enqueue (not Play) so a kill callout already sounding plays to the end first.
+            voice.Enqueue(path, Plugin.Configuration.KillStreakVoiceVolume);
+        }
+        catch
+        {
+            // Never let an announcer hiccup disrupt the frame.
         }
     }
 
