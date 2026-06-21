@@ -3,7 +3,7 @@
   <PropertyGroup>
     <Authors>fuzzycore</Authors>
     <Company></Company>
-    <Version>0.0.9</Version>
+    <Version>0.0.10</Version>
     <Description>GODLIKE - an unhinged PvP killstreak announcer</Description>
     <Copyright></Copyright>
     <PackageProjectUrl>https://github.com/fuzzycore/Godlike</PackageProjectUrl>
