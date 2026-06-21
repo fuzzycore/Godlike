@@ -39,13 +39,19 @@ public unsafe class KillStreak : IDisposable
     private const int KnockoutOffset = 0x33B8;
     private int lastKnockouts = -1;
 
-    // The local player's Frontline "Battle High" rank (0-5), a single byte in the same content
-    // director, sitting immediately before the knockout counter. (PvpStats' FrontlineContentDirector
-    // maps PlayerBattleHigh at 0x24D2 + 0xEE5 = 0x33B7, i.e. KnockoutOffset - 1.) Tied to
-    // KnockoutOffset so re-locating the knockout counter on a patch carries Battle High along with
-    // it - same PATCH-FRAGILE caveat applies. We fire a (queued) callout each time the rank climbs.
+    // The local player's Frontline "Battle High" gauge - a single byte in the same content director,
+    // sitting immediately before the knockout counter. (PvpStats' FrontlineContentDirector maps
+    // PlayerBattleHigh at 0x24D2 + 0xEE5 = 0x33B7, i.e. KnockoutOffset - 1.) Tied to KnockoutOffset so
+    // re-locating the knockout counter on a patch carries Battle High along with it - same
+    // PATCH-FRAGILE caveat applies.
+    //
+    // The byte holds POINTS (0-100), NOT the rank: every 20 points is one rank, so rank = points / 20
+    // (20 -> I, 40 -> II, 60 -> III, 80 -> IV, 100 -> V). We fire a (queued) callout each time the
+    // rank climbs.
     private const int BattleHighOffset = KnockoutOffset - 1;
-    private int lastBattleHigh = -1;
+    private const int BattleHighPointsPerRank = 20;
+    private const int BattleHighMaxPoints = 100;
+    private int lastBattleHighRank = -1;
 
     // Tracks the local player's alive/dead state so we can reset the streak the moment we die.
     private bool wasDead;
@@ -296,7 +302,7 @@ public unsafe class KillStreak : IDisposable
         testCount = 0;
         bannerUntil = DateTime.MinValue;
         lastKnockouts = -1;
-        lastBattleHigh = -1;
+        lastBattleHighRank = -1;
         wasDead = false;
     }
 
@@ -396,37 +402,40 @@ public unsafe class KillStreak : IDisposable
     }
 
     /// <summary>Watches the local player's Battle High rank and fires a callout each time it climbs.
-    /// The callout is queued behind any in-flight kill callout (see <see cref="OnBattleHighRankUp"/>)
-    /// because the same kill that earned a rank-up should be announced in full first. Decay (the rank
+    /// The gauge byte is points (0-100); every 20 points is one rank, so rank = points / 20. The
+    /// callout is queued behind any in-flight kill callout (see <see cref="OnBattleHighRankUp"/>)
+    /// because the same kill that earned the rank-up should be announced in full first. Decay (points
     /// dropping over time) is tracked silently so climbing back up re-triggers.</summary>
     private void PollBattleHigh()
     {
         var dir = GetFrontlineDirector();
         if (dir == null)
         {
-            lastBattleHigh = -1;
+            lastBattleHighRank = -1;
             return;
         }
 
         try
         {
-            int level = *(dir + BattleHighOffset);
+            int points = *(dir + BattleHighOffset);
 
-            // Valid ranks are 0-5; anything else means we're reading the wrong bytes - don't fire.
-            if (level is < 0 or > 5)
+            // The gauge runs 0-100 points; anything outside that means we're reading the wrong bytes.
+            if (points is < 0 or > BattleHighMaxPoints)
                 return;
 
-            if (lastBattleHigh < 0)
+            var rank = points / BattleHighPointsPerRank;   // 0-5 (20 points per rank)
+
+            if (lastBattleHighRank < 0)
             {
                 // First read this match - baseline silently.
-                lastBattleHigh = level;
+                lastBattleHighRank = rank;
                 return;
             }
 
-            if (level > lastBattleHigh)
-                OnBattleHighRankUp(level);
+            if (rank > lastBattleHighRank)
+                OnBattleHighRankUp(rank);
 
-            lastBattleHigh = level;
+            lastBattleHighRank = rank;
         }
         catch
         {
