@@ -13,6 +13,10 @@ public class ConfigWindow : Window, IDisposable
     private const float LabelWidth = 130f;
     private const float ValueWidth = 200f;
 
+    // Shown in the panel so the loaded build is identifiable at a glance (version is bumped every change).
+    private static readonly string Version =
+        "v" + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "?");
+
     public ConfigWindow(Plugin plugin) : base(
         "GODLIKE",
         ImGuiWindowFlags.NoCollapse)
@@ -34,6 +38,8 @@ public class ConfigWindow : Window, IDisposable
     public override void Draw()
     {
         ImGui.TextColored(new Vector4(1f, 0.84f, 0.0f, 1f), "PvP Killstreak Announcer");
+        ImGui.SameLine();
+        ImGui.TextDisabled(Version);
         ImGui.Spacing();
 
         if (ImGui.BeginTable("GodlikeTable", 2, ImGuiTableFlags.SizingFixedFit))
