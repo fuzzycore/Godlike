@@ -1,0 +1,17 @@
+{
+    "Author": "fuzzycore",
+    "Name": "GODLIKE",
+    "Punchline": "An unhinged PvP killstreak announcer.",
+    "Description": "Pops escalating arena-announcer callouts (KILL, DOUBLE KILL, MONSTER KILL ... all the way to absurd 30+ tiers) with baked-in voice lines as your PvP kill streak climbs.",
+    "InternalName": "Godlike",
+    "ApplicableVersion": "any",
+    "IconUrl": "https://raw.githubusercontent.com/fuzzycore/ffxivrepo/main/Godlike/icon.png",
+    "RepoUrl": "https://github.com/fuzzycore/Godlike",
+    "Tags": [
+        "PvP",
+        "Frontline",
+        "Killstreak",
+        "Announcer",
+        "Fun"
+    ]
+}
