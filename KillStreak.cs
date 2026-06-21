@@ -56,13 +56,17 @@ public unsafe class KillStreak : IDisposable
     // Tracks the local player's alive/dead state so we can reset the streak the moment we die.
     private bool wasDead;
 
-    // Cache of resolved per-tier voice files, rebuilt whenever the configured folder changes.
+    // Cache of resolved voice files per callout - each entry is a list of interchangeable variants,
+    // rebuilt whenever the configured folder changes. One variant is chosen at random per callout.
     private string loadedVoiceFolder = string.Empty;
-    private readonly Dictionary<int, string> voiceFiles = new();
+    private readonly Dictionary<int, List<string>> voiceFiles = new();
 
-    // Resolved Battle High voice files, keyed by rank 1-5 (files BATTLE_HIGH_ONE..FIVE).
-    private readonly Dictionary<int, string> battleHighFiles = new();
+    // Resolved Battle High voice files, keyed by rank 1-5 (files BATTLE_HIGH_ONE..FIVE + variants).
+    private readonly Dictionary<int, List<string>> battleHighFiles = new();
     private static readonly string[] BattleHighWords = { "ONE", "TWO", "THREE", "FOUR", "FIVE" };
+
+    // Last file played, so back-to-back callouts pick a different variant when more than one exists.
+    private string? lastVoicePath;
 
     private static readonly string[] VoiceExtensions = { ".wav", ".mp3" };
 
@@ -210,7 +214,11 @@ public unsafe class KillStreak : IDisposable
             if (folder != loadedVoiceFolder)
                 RebuildVoiceCache(folder);
 
-            if (!voiceFiles.TryGetValue(tier, out var path) || !File.Exists(path))
+            if (!voiceFiles.TryGetValue(tier, out var variants) || variants.Count == 0)
+                return false;
+
+            var path = PickVariant(variants);
+            if (!File.Exists(path))
                 return false;
 
             voice.Play(path, Plugin.Configuration.KillStreakVoiceVolume);
@@ -244,31 +252,53 @@ public unsafe class KillStreak : IDisposable
 
         for (var i = 0; i < StreakTiers.Length; i++)
         {
-            var path = ResolveAudioFile(folder, StreakTiers[i].Threshold.ToString(), Slug(StreakTiers[i].Name));
-            if (path != null)
-                voiceFiles[i] = path;
+            var variants = ResolveAudioVariants(folder, StreakTiers[i].Threshold.ToString(), Slug(StreakTiers[i].Name));
+            if (variants.Count > 0)
+                voiceFiles[i] = variants;
         }
 
         for (var level = 1; level <= BattleHighWords.Length; level++)
         {
-            var path = ResolveAudioFile(folder, $"BATTLE_HIGH_{BattleHighWords[level - 1]}");
-            if (path != null)
-                battleHighFiles[level] = path;
+            var variants = ResolveAudioVariants(folder, $"BATTLE_HIGH_{BattleHighWords[level - 1]}");
+            if (variants.Count > 0)
+                battleHighFiles[level] = variants;
         }
     }
 
-    /// <summary>Returns the first existing audio file matching any of the given base names (in order),
-    /// trying each supported extension, or null if none exist.</summary>
-    private static string? ResolveAudioFile(string folder, params string[] baseNames)
+    /// <summary>Collects every audio file representing one of the given callouts: an exact match
+    /// (e.g. MULTIKILL.wav / 4.wav) plus any suffixed variants (MULTIKILL_2.wav, 4_alt.mp3, ...).
+    /// Returning all of them lets the announcer pick one at random per callout so repeats don't get
+    /// monotonous - drop in more "&lt;BASE&gt;_&lt;whatever&gt;.wav" files to grow the pool, no code change needed.</summary>
+    private static List<string> ResolveAudioVariants(string folder, params string[] baseNames)
     {
+        var found = new List<string>();
         foreach (var baseName in baseNames)
+        {
             foreach (var ext in VoiceExtensions)
             {
-                var path = Path.Combine(folder, baseName + ext);
-                if (File.Exists(path))
-                    return path;
+                var exact = Path.Combine(folder, baseName + ext);
+                if (File.Exists(exact))
+                    found.Add(exact);
             }
-        return null;
+
+            foreach (var file in Directory.EnumerateFiles(folder, baseName + "_*"))
+                if (Array.IndexOf(VoiceExtensions, Path.GetExtension(file).ToLowerInvariant()) >= 0)
+                    found.Add(file);
+        }
+        return found;
+    }
+
+    /// <summary>Picks a random variant, avoiding an immediate repeat of the last one played when the
+    /// pool has more than one option.</summary>
+    private string PickVariant(List<string> variants)
+    {
+        if (variants.Count == 1)
+            return lastVoicePath = variants[0];
+
+        var idx = Random.Shared.Next(variants.Count);
+        if (variants[idx] == lastVoicePath)
+            idx = (idx + 1 + Random.Shared.Next(variants.Count - 1)) % variants.Count;
+        return lastVoicePath = variants[idx];
     }
 
     private static string Slug(string name)
@@ -457,7 +487,11 @@ public unsafe class KillStreak : IDisposable
             if (folder != loadedVoiceFolder)
                 RebuildVoiceCache(folder);
 
-            if (!battleHighFiles.TryGetValue(level, out var path) || !File.Exists(path))
+            if (!battleHighFiles.TryGetValue(level, out var variants) || variants.Count == 0)
+                return;
+
+            var path = PickVariant(variants);
+            if (!File.Exists(path))
                 return;
 
             // Enqueue (not Play) so a kill callout already sounding plays to the end first.
